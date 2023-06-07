@@ -132,5 +132,5 @@ class HandlerContext {
 }
 
 // Usage
-const handlerContext = new HandlerContext('defaultOpenAIClient', 'defaultVectorDB');
-app.post('/question', handlerContext.questionHandler);
+// const handlerContext = new HandlerContext('defaultOpenAIClient', 'defaultVectorDB');
+// app.post('/question', handlerContext.questionHandler);

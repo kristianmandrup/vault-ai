@@ -10,7 +10,7 @@ import * as strconv from 'strconv';
 import * as strings from 'strings';
 import * as time from 'time';
 
-import * as gzip from 'compress/gzip';
+import * as gzip from 'node:zlib';
 import { io } from 'compress/gzip';
 import { gzipResponseWriter } from 'compress/gzip';
 
@@ -38,7 +38,7 @@ const siteConfig: Record<string, string> = {
   'DEBUG_SITE': 'false',
 };
 
-function main(): void {
+export function main(): void {
   // Parse command line flags + override defaults
   flag.Parse();
   siteConfig['DEBUG_SITE'] = strconv.FormatBool(debugSite);
@@ -102,7 +102,7 @@ function main(): void {
 
   // if serving on https, need to provide self-signed certs
   if (port == '443') {
-    go(httpRedirect); // redirect all http to https
+    goTo(httpRedirect); // redirect all http to https
     const certFile = '/etc/letsencrypt/live/vault.pash.city/fullchain.pem';
     const keyFile = '/etc/letsencrypt/live/vault.pash.city/privkey.pem';
     log.Println('[negroni] listening on :443');
