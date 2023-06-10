@@ -1,13 +1,11 @@
-import * as flag from 'flag';
 import * as fmt from 'fmt';
-import * as htmltemplate from 'html/template';
 import * as log from 'log';
 import * as mathrand from 'math/rand';
 import * as nethttp from 'net/http';
 import * as os from 'os';
+import getenv from 'getenv';
 import * as path from 'path';
 import * as strconv from 'strconv';
-import * as strings from 'strings';
 import * as time from 'time';
 
 import * as gzip from 'node:zlib';
@@ -30,21 +28,19 @@ const NegroniLogFmt = `{{.StartTime}} | {{.Status}} | {{.Duration}}
           {{.Method}} {{.Path}}`;
 const NegroniDateFmt = time.Stamp;
 
-const debugSite = flag.Bool(
-  'debug', false, 'debug site');
-const port = flag.String(
-  'port', '8100', 'server port');
-const siteConfig: Record<string, string> = {
-  'DEBUG_SITE': 'false',
-};
+const flags = {
+  debugSite: false,
+  port: '8100',
+  siteConfig: {
+    'DEBUG_SITE': 'false'
+  }
+}
 
 export function main(): void {
   // Parse command line flags + override defaults
-  flag.Parse();
-  siteConfig['DEBUG_SITE'] = strconv.FormatBool(debugSite);
-  mathrand.Seed(time.Now().UnixNano());
+  flags.siteConfig['DEBUG_SITE'] = strconv.formatBool(debugSite);
 
-  const openaiApiKey = os.Getenv('OPENAI_API_KEY');
+  const openaiApiKey = getenv('OPENAI_API_KEY');
   if (openaiApiKey.length == 0) {
     log.Fatalln('MISSING OPENAI API KEY ENV VARIABLE');
   }
@@ -53,7 +49,7 @@ export function main(): void {
   let vectorDB: vectordb.VectorDB;
   let err: Error | null;
 
-  const qdrantApiEndpoint = os.Getenv('QDRANT_API_ENDPOINT');
+  const qdrantApiEndpoint = getenv('QDRANT_API_ENDPOINT');
   if (qdrantApiEndpoint.length != 0) {
     [vectorDB, err] = qdrant.New(qdrantApiEndpoint);
     if (err != null) {
@@ -61,9 +57,9 @@ export function main(): void {
     }
   }
 
-  const pineconeApiEndpoint = os.Getenv('PINECONE_API_ENDPOINT');
+  const pineconeApiEndpoint = getenv('PINECONE_API_ENDPOINT');
   if (pineconeApiEndpoint.length != 0) {
-    const pineconeApiKey = os.Getenv('PINECONE_API_KEY');
+    const pineconeApiKey = getenv('PINECONE_API_KEY');
     if (pineconeApiKey.length == 0) {
       log.Fatalln('MISSING PINECONE API KEY ENV VARIABLE');
     }
@@ -113,7 +109,7 @@ export function main(): void {
 }
 
 // / Takes a response writer Meta config and URL and servers the react app with the correct metadata
-function ServeIndex(w: nethttp.ResponseWriter, r: nethttp.Request, meta: serverutil.SiteConfig): void {
+function serveIndex(w: nethttp.ResponseWriter, r: nethttp.Request, meta: serverutil.SiteConfig): void {
   //Here we handle the possible dev environments or pass the basic Hostpath with "/" at the end for the / metadata for each site
   let currentHost: string;
   let currentSite: string;
@@ -209,7 +205,7 @@ class gzipResponseWriter {
     this.ResponseWriter = ResponseWriter;
   }
 
-  Write(b: []byte): number, error {
+  Write(b: any[]): any {
     return this.Writer.Write(b);
   }
 }
@@ -221,19 +217,20 @@ function ReactFileServer(fs: nethttp.FileSystem): nethttp.Handler {
   return nethttp.HandlerFunc(function (w: nethttp.ResponseWriter, r: nethttp.Request): void {
     //get the Metadata Config
     const jsonConfig = serverutil.GetConfig();
+    const basePath = path.basename(r.URL.Path);
 
-    if (path.Clean(r.URL.Path) == '/' || path.Clean(r.URL.Path) == '/index.html') {
-      ServeIndex(w, r, jsonConfig.SiteMetaData);
+    if (basePath == '/' || basePath == '/index.html') {
+      serveIndex(w, r, jsonConfig.SiteMetaData);
       return;
     }
 
-    if (os.Stat(serverutil.WebAbs(r.URL.Path)), os.IsNotExist(err)) {
-      ServeIndex(w, r, jsonConfig.SiteMetaData);
+    if (fs.stat(serverutil.WebAbs(r.URL.Path))) {
+      serveIndex(w, r, jsonConfig.SiteMetaData);
       return;
     }
 
     // if gzip not possible serve as is
-    if (!strings.Contains(r.Header.Get('Accept-Encoding'), 'gzip')) {
+    if (!r.Header.Get('Accept-Encoding').contains('gzip')) {
       fsh.ServeHTTP(w, r);
       return;
     }
@@ -241,38 +238,40 @@ function ReactFileServer(fs: nethttp.FileSystem): nethttp.Handler {
     w.Header().Set('Content-Encoding', 'gzip');
     w.Header().Set('Vary', 'Accept-Encoding');
     gzipWriter := gzip.NewWriter(w);
-    defer gzipWriter.Close();
+    gzipWriter.Close();
 
-    const writer: gzipResponseWriter = gzipResponseWriter{
+    const writer: gzipResponseWriter = {
       Writer: gzipWriter,
       ResponseWriter: w,
     };
 
+
     // Try to serve the gzipped file
-    const f, err = fs.Open(r.URL.Path + '.gz');
-    if err == nil {
-      const fi, _ = f.Stat();
-      if fi.IsDir() {
+    try {
+      const gzipFilePath = r.URL.Path + '.gz';
+      const f = fs.open(gzipFilePath);
+      const fi = fs.stat(gzipFilePath);
+      if (fi.isDir()) {
         // if it's a directory, just serve the directory listing
         fsh.ServeHTTP(w, r);
         return;
       }
-
+  
       http.ServeContent(writer, r, r.URL.Path, fi.ModTime(), f);
       return;
-    }
-
-    // fallback to serving the uncompressed file
-    fsh.ServeHTTP(writer, r);
+    } catch (err) {
+      // fallback to serving the uncompressed file
+      fsh.ServeHTTP(writer, r);
+    }    
   });
 }
 
 // This function redirects all http traffic to the https equivalent
 function httpRedirect(): void {
-  log.Println('[redirector] listening on :80');
-  log.Fatal(nethttp.ListenAndServe(':80', nethttp.HandlerFunc(function (w: nethttp.ResponseWriter, r: nethttp.Request): void {
+  console.log('[redirector] listening on :80');
+  console.error(nethttp.ListenAndServe(':80', nethttp.HandlerFunc(function (w: nethttp.ResponseWriter, r: nethttp.Request): void {
     target := 'https://' + r.Host + r.URL.Path;
-    if len(r.URL.RawQuery) > 0 {
+    if (r.URL.RawQuery.length > 0) {
       target += '?' + r.URL.RawQuery;
     }
     log.Printf('Redirecting %s to %s', r.URL.String(), target);
